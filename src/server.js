@@ -71,7 +71,7 @@ export function createServer() {
       inputSchema: {
         place: placeSchema,
         when: z
-          .string()
+          .union([z.string(), z.number()])
           .describe(
             "Når brukeren skal ut, Oslo-tid: 'nå' eller klokkeslett som '18', '18:30', '21.5'. Påkrevd – spør brukeren hvis det ikke er oppgitt."
           ),
