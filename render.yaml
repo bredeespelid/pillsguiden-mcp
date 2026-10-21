@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: pilsguiden-mcp
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: MCP_AUTH_TOKEN
+        sync: false
