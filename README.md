@@ -6,7 +6,7 @@ MCP-server som gir Claude (og andre MCP-klienter) tilgang til ølprisene på [pi
 
 | Verktøy | Hva det gjør |
 |---|---|
-| `cheap_beer_now` | «Hvor bør jeg dra for billig pils nå/i kveld?» Tar hensyn til klokkeslett (happy hour som gjelder «frem til kl 21» osv.) og ferskhet på prisene. |
+| `cheap_beer_now` | «Hvor bør jeg dra for billig pils?» Krever `when` (nå, 18, 21:30) – Claude spør om tidspunkt hvis du ikke har sagt det. Tar hensyn til happy hour og viser både glasspris og halvliterpris (`sort_by: glass` gir billigste glass). |
 | `list_bars` | Hele listen med filter: makspris, bryggeri, fritekst (gate/navn), kun ordinære priser, sortering. |
 | `find_bar` | Slå opp én bar på navn. |
 | `get_price_stats` | Median/snitt for stedet sammenlignet med Norge. |
