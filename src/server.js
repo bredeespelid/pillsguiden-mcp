@@ -17,10 +17,10 @@ const fail = (err) => ({ isError: true, content: [{ type: "text", text: String(e
 
 export function createServer() {
   const server = new McpServer(
-    { name: "pilsguiden", version: "1.1.0" },
+    { name: "pilsguiden", version: "1.2.0" },
     {
       instructions:
-        "Ølpriser fra pilsguiden.no. Når brukeren spør hvor det er billig pils uten å si når de skal ut, spør først om tidspunktet (nå, etter jobb, kl 22 …) – mange av de billigste prisene er happy hour som slutter kl 19–23. Bruk så cheap_beer_now med 'when'. Oppgi både glasspris med størrelse og pris per halvliter.",
+        "Ølpriser fra pilsguiden.no. For 'hvor er det billig pils?' bruk cheap_beer_now. Uten tidspunkt viser den billigste priser inkl. happy hour med sluttid; med 'when' filtreres det på tidspunktet. Oppgi glasspris med størrelse og pris per halvliter, og merk happy hour med 'til kl X'.",
     }
   );
 
@@ -63,18 +63,17 @@ export function createServer() {
   server.registerTool(
     "cheap_beer_now",
     {
-      title: "Billig pils nå / i kveld",
+      title: "Billigste pils (inkl. happy hour)",
       description:
-        "Svarer på 'hvor bør jeg dra for billig pils?'. Rangeringen avhenger sterkt av klokkeslett, fordi mange av de billigste prisene er happy hour som bare gjelder til f.eks. kl 19, 21 eller 23. " +
-        "VIKTIG: Hvis brukeren ikke har sagt NÅR de skal ut (f.eks. 'nå', 'kl 18', 'etter jobb', 'i kveld kl 22'), SPØR brukeren om tidspunkt før du kaller verktøyet – ikke gjett. " +
-        "Svar med både glasspris og størrelse (price + size_liters) og halvliterpris, og nevn når happy hour slutter.",
+        "Svarer på 'hvor er det billig pils?'. Standard (uten 'when'): de billigste prisene totalt, INKLUDERT happy hour, med når happy hour slutter (valid_until_hour). " +
+        "Med 'when' ('nå', '18', '21:30'): bare priser som faktisk gjelder på det tidspunktet. " +
+        "I svaret: oppgi glasspris med størrelse og pris per halvliter, merk happy hour med 'til kl X', og nevn billigste pris som gjelder hele kvelden (cheapest_all_evening).",
       inputSchema: {
         place: placeSchema,
         when: z
           .union([z.string(), z.number()])
-          .describe(
-            "Når brukeren skal ut, Oslo-tid: 'nå' eller klokkeslett som '18', '18:30', '21.5'. Påkrevd – spør brukeren hvis det ikke er oppgitt."
-          ),
+          .optional()
+          .describe("Valgfritt. Når brukeren skal ut, Oslo-tid: 'nå' eller klokkeslett som '18', '18:30'. Utelat for å vise alle billigste priser inkl. happy hour."),
         sort_by: z
           .enum(["half_liter", "glass"])
           .optional()
@@ -92,58 +91,67 @@ export function createServer() {
     async ({ place, when, sort_by, max_price, max_age_days, limit }) => {
       try {
         const now = osloNow();
-        const w = String(when || "").trim().toLowerCase();
-        let hour;
-        if (!w || w === "nå" || w === "na" || w === "now") hour = now.hour + now.minute / 60;
-        else {
+        const w = when == null ? "" : String(when).trim().toLowerCase();
+        let hour = null; // null = ingen tidsfilter
+        let label = "hele dagen (inkl. happy hour)";
+        if (w === "nå" || w === "na" || w === "now") {
+          hour = now.hour + now.minute / 60;
+          label = now.label;
+        } else if (w) {
           const m = w.match(/(\d{1,2})(?:[:.,](\d{1,2}))?/);
           if (!m) return fail("Forstod ikke tidspunktet. Bruk 'nå' eller f.eks. '18', '18:30'.");
-          const h = Number(m[1]);
           const frac = m[2] ? (w.includes(":") || m[2].length === 2 ? Number(m[2]) / 60 : Number("0." + m[2])) : 0;
-          hour = h + frac;
+          hour = Number(m[1]) + frac;
+          label = `kl ${String(Math.floor(hour)).padStart(2, "0")}:${String(Math.round((hour % 1) * 60)).padStart(2, "0")}`;
         }
-        const at_hour = !w || w === "nå" || w === "na" || w === "now" ? null : hour;
         const d = await getList(place || DEFAULT_PLACE);
         const maxAge = max_age_days ?? 365;
+        const key = sort_by === "glass" ? "price" : "price_per_half_liter";
         const candidates = d.bars
           .filter((b) => b.price_per_half_liter != null)
-          .filter((b) => validAt(b, hour))
+          .filter((b) => hour == null || validAt(b, hour))
           .map((b) => ({ ...b, price_age_days: ageDays(b), valid_until: parseValidity(b.validity).until_hour ?? null }))
           .filter((b) => b.price_age_days == null || b.price_age_days <= maxAge)
           .filter((b) => max_price == null || b.price_per_half_liter <= max_price)
-          .sort((a, b) => {
-            const key = sort_by === "glass" ? "price" : "price_per_half_liter";
-            return (a[key] ?? 1e9) - (b[key] ?? 1e9) || (a.price_age_days ?? 999) - (b.price_age_days ?? 999);
-          });
+          .sort((a, b) => (a[key] ?? 1e9) - (b[key] ?? 1e9) || (a.price_age_days ?? 999) - (b.price_age_days ?? 999));
+        const brief = (b) =>
+          b && {
+            name: b.name,
+            price: b.price,
+            size_liters: b.size_liters,
+            price_per_half_liter: b.price_per_half_liter,
+            happy_hour: b.time_limited,
+            valid_until_hour: b.valid_until,
+            address: b.address,
+          };
         const cheapestGlass = candidates.reduce((m, b) => (b.price != null && (!m || b.price < m.price) ? b : m), null);
+        const allEvening = candidates.find((b) => b.valid_until == null);
         const picks = candidates.slice(0, limit ?? 10).map((b) => ({
           name: b.name,
-          price_per_half_liter: b.price_per_half_liter,
           price: b.price,
           size_liters: b.size_liters,
-          brewery: b.brewery,
-          address: b.address,
-          validity: b.validity,
+          price_per_half_liter: b.price_per_half_liter,
           happy_hour: b.time_limited,
           valid_until_hour: b.valid_until,
+          validity: b.validity,
+          brewery: b.brewery,
+          address: b.address,
           price_checked: b.price_checked,
           price_age_days: b.price_age_days,
         }));
         return json({
           location: d.location_name,
           source: d.url,
-          evaluated_for: at_hour != null ? `kl ${String(Math.floor(hour)).padStart(2, "0")}:${String(Math.round((hour % 1) * 60)).padStart(2, "0")}` : now.label,
+          evaluated_for: label,
           sorted_by: sort_by === "glass" ? "glasspris" : "pris per halvliter",
           median_price: d.stats.median,
-          cheapest_glass: cheapestGlass && {
-            name: cheapestGlass.name,
-            price: cheapestGlass.price,
-            size_liters: cheapestGlass.size_liters,
-            price_per_half_liter: cheapestGlass.price_per_half_liter,
-            valid_until_hour: cheapestGlass.valid_until,
-          },
+          cheapest_glass: brief(cheapestGlass),
+          cheapest_all_evening: brief(allEvening),
           note:
-            "price = det du betaler for glasset (size_liters). price_per_half_liter = omregnet til 0,5 l for rettferdig sammenligning. Nevn begge når glasset ikke er 0,5 l. Happy hour-priser er kun med hvis de gjelder på valgt tidspunkt. Prisene er brukerrapporterte.",
+            (hour == null
+              ? "Ingen tid oppgitt: listen inkluderer happy hour-priser – merk dem med 'til kl X'. Spør gjerne når brukeren skal ut hvis det påvirker valget. "
+              : "Kun priser som gjelder på valgt tidspunkt. ") +
+            "price = glasspris for size_liters; price_per_half_liter = omregnet til 0,5 l. Prisene er brukerrapporterte.",
           suggestions: picks,
         });
       } catch (e) {
