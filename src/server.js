@@ -17,10 +17,10 @@ const fail = (err) => ({ isError: true, content: [{ type: "text", text: String(e
 
 export function createServer() {
   const server = new McpServer(
-    { name: "pilsguiden", version: "1.2.0" },
+    { name: "pilsguiden", version: "1.3.0" },
     {
       instructions:
-        "Ølpriser fra pilsguiden.no. For 'hvor er det billig pils?' bruk cheap_beer_now. Uten tidspunkt viser den billigste priser inkl. happy hour med sluttid; med 'when' filtreres det på tidspunktet. Oppgi glasspris med størrelse og pris per halvliter, og merk happy hour med 'til kl X'.",
+        "Ølpriser fra pilsguiden.no. For 'hvor er det billig pils?' bruk cheap_beer_now. Listen er sortert på glasspris (det du betaler) inkl. happy hour – presenter i samme rekkefølge, med billigste glass først. Oppgi størrelse og pris per halvliter, og merk happy hour med 'til kl X'. Med 'when' filtreres det på tidspunktet.",
     }
   );
 
@@ -67,7 +67,7 @@ export function createServer() {
       description:
         "Svarer på 'hvor er det billig pils?'. Standard (uten 'when'): de billigste prisene totalt, INKLUDERT happy hour, med når happy hour slutter (valid_until_hour). " +
         "Med 'when' ('nå', '18', '21:30'): bare priser som faktisk gjelder på det tidspunktet. " +
-        "I svaret: oppgi glasspris med størrelse og pris per halvliter, merk happy hour med 'til kl X', og nevn billigste pris som gjelder hele kvelden (cheapest_all_evening).",
+        "Sortert etter glasspris (det du betaler) som standard. I svaret: START med første forslag (billigst glass), oppgi glasspris med størrelse og pris per halvliter, merk happy hour med 'til kl X'. Nevn cheapest_all_evening til slutt som alternativ om happy hour er over.",
       inputSchema: {
         place: placeSchema,
         when: z
@@ -77,7 +77,7 @@ export function createServer() {
         sort_by: z
           .enum(["half_liter", "glass"])
           .optional()
-          .describe("'half_liter' (standard, rettferdig sammenligning) eller 'glass' (billigste glass uansett størrelse)"),
+          .describe("'glass' (standard: billigste glass uansett størrelse) eller 'half_liter' (omregnet til 0,5 l)"),
         max_price: z.number().optional().describe("Maks pris per halvliter (NOK)"),
         max_age_days: z
           .number()
@@ -106,14 +106,14 @@ export function createServer() {
         }
         const d = await getList(place || DEFAULT_PLACE);
         const maxAge = max_age_days ?? 365;
-        const key = sort_by === "glass" ? "price" : "price_per_half_liter";
+        const key = sort_by === "half_liter" ? "price_per_half_liter" : "price";
         const candidates = d.bars
           .filter((b) => b.price_per_half_liter != null)
           .filter((b) => hour == null || validAt(b, hour))
           .map((b) => ({ ...b, price_age_days: ageDays(b), valid_until: parseValidity(b.validity).until_hour ?? null }))
           .filter((b) => b.price_age_days == null || b.price_age_days <= maxAge)
           .filter((b) => max_price == null || b.price_per_half_liter <= max_price)
-          .sort((a, b) => (a[key] ?? 1e9) - (b[key] ?? 1e9) || (a.price_age_days ?? 999) - (b.price_age_days ?? 999));
+          .sort((a, b) => (a[key] ?? 1e9) - (b[key] ?? 1e9) || (a.price_per_half_liter ?? 1e9) - (b.price_per_half_liter ?? 1e9) || (a.price_age_days ?? 999) - (b.price_age_days ?? 999));
         const brief = (b) =>
           b && {
             name: b.name,
@@ -143,7 +143,7 @@ export function createServer() {
           location: d.location_name,
           source: d.url,
           evaluated_for: label,
-          sorted_by: sort_by === "glass" ? "glasspris" : "pris per halvliter",
+          sorted_by: sort_by === "half_liter" ? "pris per halvliter" : "glasspris",
           median_price: d.stats.median,
           cheapest_glass: brief(cheapestGlass),
           cheapest_all_evening: brief(allEvening),
