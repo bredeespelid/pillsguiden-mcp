@@ -33,12 +33,15 @@ const night = parseValidityText("Gyldig mellom 22:00 og 02:00, fredag");
 assert.equal(windowApplies(night, 5, 1), true);
 assert.equal(windowApplies(night, 4, 1), false);
 assert.equal(windowApplies(night, 4, 23), true);
-console.log(`parser: ${cases.length + 4} ok`);
+// "før kl 15" gjelder ikke natt etter midnatt
+assert.equal(windowApplies(parseValidityText("Gyldig før kl 15:00, Alle dager"), 3, 1), false);
+assert.equal(windowApplies(parseValidityText("Gyldig før kl 15:00, Alle dager"), 3, 14), true);
+console.log(`parser: ${cases.length + 6} ok`);
 
 // ---- ende-til-ende ----
 const procs = [
   spawn("node", ["test/mock-pilsguiden.mjs"], { env: { ...process.env, MOCK_PORT: "4011" }, stdio: "inherit" }),
-  spawn("node", ["src/http.js"], { env: { ...process.env, PORT: "3990", PILSGUIDEN_BASE_URL: "http://localhost:4011" }, stdio: "ignore" }),
+  spawn("node", ["src/http.js"], { env: { ...process.env, PORT: "3990", PILSGUIDEN_BASE_URL: "http://localhost:4011", WARM_ON_START: "0" }, stdio: "ignore" }),
 ];
 await new Promise((r) => setTimeout(r, 1500));
 let id = 0;
@@ -69,7 +72,8 @@ try {
   check(f.bars[0].price === 68 && f.bars[0].validity === "Prisen gjelder utenom happy hour", "  gamle toppfelt beholdt");
 
   const all = await call("cheap_beer_now", { limit: 50, max_price: 85 });
-  check(all.suggestions[0].name === "SIP Oslo" && all.suggestions[0].price === 49, `uten when: SIP 49 øverst (fikk ${all.suggestions[0].name} ${all.suggestions[0].price})`);
+  const top3 = all.suggestions.slice(0, 3).map((s) => s.name);
+  check(top3.includes("SIP Oslo") && sip(all).price === 49, `uten when: SIP 49 blant topp 3 (${top3.join(", ")})`);
   check(sip(all).window === "15–21, man–lør" && sip(all).other_prices[0].price === 68, "  vindu + other_prices");
   check(doner(all).price === 54 && doner(all).other_prices.length === 0, "  Döner uendret 54");
 
@@ -94,8 +98,14 @@ try {
   check(irish.suggestions.find((s) => s.name.startsWith("The Old Irish")).price === 49, "21:30 → Old Irish 49 (20–23)");
   check(doner(irish).price === 54, "  Döner 54");
 
+  check(at18.suggestions.find((s) => s.name === "Phuket Restaurant Oslo").price === 56, "torsdag → Phuket 56");
+  const tue = await call("cheap_beer_now", { when: "tirsdag 18", limit: 50 });
+  check(tue.suggestions.find((s) => s.name === "Phuket Restaurant Oslo").price === 49, "tirsdag → Phuket 49 (lista sa 'alltid gyldig')");
+  const ph = await call("find_bar", { name: "Phuket" });
+  check(ph.bars[0].prices.length === 2, "find_bar(Phuket) → 2 priser");
+
   const audit = await call("audit_prices", {});
-  check(audit.bars_with_multiple_prices === 5 && audit.not_caught_by_quick_check.length === 0 && audit.unparsed_validity_texts.length === 0, "audit_prices: 5 med flere priser, ingen bommet");
+  check(audit.bars_with_multiple_prices === 6 && audit.not_caught_by_quick_check.length === 1 && audit.unparsed_validity_texts.length === 0, "audit_prices: 6 med flere priser, 1 som lista skjuler");
 
   console.log(`ende-til-ende: ${ok} ok`);
 } finally {

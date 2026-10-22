@@ -245,6 +245,7 @@ export function createServer() {
           sorted_by: key === "price" ? "glasspris" : "pris per halvliter",
           median_price: d.stats.median,
           matches: rows.length,
+          ...(bars.incomplete ? { warning: `${bars.incomplete} barer mangler detaljpriser akkurat nå (henter fortsatt) – prøv igjen om et halvt minutt for komplett liste.` } : {}),
           cheapest_glass: cheapestGlass && { ...brief({ b: cheapestGlass.b, p: cheapestGlass.chosen }), happy_hour: cheapestGlass.chosen.type === "time_limited" },
           cheapest_all_evening: brief(allEvening),
           note:
@@ -325,7 +326,7 @@ export function createServer() {
       try {
         const d = await getList(place || DEFAULT_PLACE);
         const { total, bars } = filterBars(d.bars, { query: name, sort: "name", limit: 20 });
-        const enriched = await withAllPrices(bars, { all: true });
+        const enriched = await withAllPrices(bars);
         return json({
           location: d.location_name,
           matches: total,

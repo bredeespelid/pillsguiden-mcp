@@ -2,6 +2,8 @@
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, runAudit } from "./server.js";
+import { getList } from "./pilsguiden.js";
+import { withAllPrices } from "./prices.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const AUTH_TOKEN = process.env.MCP_AUTH_TOKEN || ""; // valgfritt: krev "Authorization: Bearer <token>"
@@ -71,4 +73,16 @@ const notAllowed = (_req, res) =>
 app.get("/mcp", notAllowed);
 app.delete("/mcp", notAllowed);
 
-app.listen(PORT, () => console.log(`pilsguiden-mcp lytter på :${PORT}/mcp`));
+app.listen(PORT, () => {
+  console.log(`pilsguiden-mcp lytter på :${PORT}/mcp`);
+  // Varm opp alle detaljpriser ved oppstart og hver 6. time, så første spørsmål går raskt.
+  const warm = () =>
+    getList(process.env.DEFAULT_PLACE || "oslo")
+      .then((d) => withAllPrices(d.bars, { waitMs: 120000 }))
+      .then((b) => console.log(`detaljpriser klare: ${b.length - b.incomplete}/${b.length}`))
+      .catch((e) => console.error("oppvarming feilet:", e.message));
+  if (process.env.WARM_ON_START !== "0") {
+    warm();
+    setInterval(warm, 6 * 3600 * 1000).unref();
+  }
+});

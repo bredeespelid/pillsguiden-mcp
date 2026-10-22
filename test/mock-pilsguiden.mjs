@@ -6,7 +6,11 @@ import { stringify } from "devalue";
 // [id, navn, adresse, bryggeri, størrelse, [[pris, pint, sjekket, gyldig, aktiv], ...]]
 const BARS = [
   [1689, "Doug's Hamburgers Aker Brygge", "Fjordalléen 4, 0250 Oslo", "Budweiser", 0.5, [[55, 55, "2026-10-16T17:16:19+02:00", "Prisen er alltid gyldig", true]]],
-  [1705, "Phuket Restaurant Oslo", "Herslebs gate 4a, 0561 Oslo", "Ringnes", 0.5, [[56, 56, "2026-10-19T20:56:34+02:00", "Prisen er alltid gyldig", true]]],
+  // Lista viser "Prisen er alltid gyldig" selv om baren har en tirsdagspris (slik nettsiden faktisk gjør).
+  [1705, "Phuket Restaurant Oslo", "Herslebs gate 4a, 0561 Oslo", "Ringnes", 0.5, [
+    [56, 56, "2026-10-19T20:56:34+02:00", "Gyldig når ingen annen pris gjelder", true, "Prisen er alltid gyldig"],
+    [49, 49, "2026-10-14T19:00:00+02:00", "Gyldig hele åpningstiden, tirsdag", false],
+  ]],
   [434, "Döner Bros", "Osterhaus' gate 12, 0183 Oslo", "Nordlands Pils", 0.4, [[54, 68, "2026-04-23T19:00:50+02:00", "Prisen er alltid gyldig", true]]],
   [1792, "SIP Oslo", "Storgata 13, 0155 Oslo", "Hansa", 0.4, [
     [68, 85, "2026-10-09T23:40:45+02:00", "Gyldig når ingen annen pris gjelder", true],
@@ -38,9 +42,9 @@ const list = {
   location_id: 1,
   stats: { location_name: "Oslo", mean: 119, median: 120, count: 589, parent_id: 1954, parent_name: "Norge", parent_count: 1622, parent_mean: 123, parent_median: 124 },
   bars: BARS.map(([id, name, address, brewery, size, prices]) => {
-    const [price, pint, checked, valid] = prices.find((p) => p[4]);
+    const [price, pint, checked, valid, , listText] = prices.find((p) => p[4]);
     const isDefault = /alltid|ingen annen/.test(valid);
-    return { id, name, address, slug: slug(name), location: 25, brewery, size, price, pint, price_checked: checked, valid_to: LIST_TEXT[valid] || valid, default_price: isDefault, NextLoc: { id: 0, name: "", slug: "" } };
+    return { id, name, address, slug: slug(name), location: 25, brewery, size, price, pint, price_checked: checked, valid_to: listText || LIST_TEXT[valid] || valid, default_price: isDefault, NextLoc: { id: 0, name: "", slug: "" } };
   }),
   links: [{ id: 2, name: "Grünerløkka", slug: "grunerlokka" }, { id: 3, name: "Sentrum", slug: "sentrum" }],
   breadcrumb: [{ name: "Oslo", slug: "oslo" }],

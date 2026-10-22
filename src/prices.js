@@ -6,7 +6,7 @@ import { unflatten } from "devalue";
 
 const BASE_URL = (process.env.PILSGUIDEN_BASE_URL || "https://www.pilsguiden.no").replace(/\/$/, "");
 const DETAIL_TTL_MS = Number(process.env.DETAIL_CACHE_TTL_SECONDS || 6 * 3600) * 1000;
-const CONCURRENCY = Number(process.env.DETAIL_CONCURRENCY || 8);
+const CONCURRENCY = Number(process.env.DETAIL_CONCURRENCY || 12);
 const USER_AGENT = process.env.USER_AGENT || "pilsguiden-mcp/1.0 (+https://github.com/bredeespelid/pillsguiden-mcp)";
 
 export const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -143,7 +143,7 @@ export function windowLabel(p) {
 export function windowApplies(p, day, hour) {
   if (!p.parsed) return false;
   const onDay = (d) => !p.days || p.days.includes(((d % 7) + 7) % 7);
-  const from = p.from ?? 0;
+  const from = p.from ?? (p.until != null ? 6 : 0);
   const until = p.until ?? 24;
   if (until > from) {
     if (onDay(day) && hour >= from && hour < until) return true;
@@ -269,30 +269,31 @@ function priceFromListEntry(b) {
   };
 }
 
-// Trenger baren detaljoppslag? Bare "Prisen er alltid gyldig" + vanlig pris i lista er trygt én pris.
+// Hurtigsjekk: "Prisen er alltid gyldig" i lista betyr IKKE alltid én pris – kontrollen viste at
+// barer med en egen dagspris (f.eks. "hele åpningstiden, tirsdag") også vises slik. Brukes bare i audit.
 export function needsDetail(b) {
   return !(b.time_limited === false && /alltid gyldig/i.test(b.validity || ""));
 }
 
-// Legger til `prices` (alle priser) på hver bar. Henter detaljer for barer som kan ha flere priser.
-// Øvrige barer hentes i bakgrunnen og brukes når de ligger i cache.
-export async function withAllPrices(bars, { all = false } = {}) {
-  const must = bars.filter((b) => all || needsDetail(b));
-  const results = await mapLimit(must, CONCURRENCY, (b) => getBarDetail(b.slug));
-  const bySlug = new Map();
-  must.forEach((b, i) => results[i].ok && bySlug.set(b.slug, results[i].value));
+const WAIT_MS = Number(process.env.DETAIL_WAIT_MS || 25000);
 
-  if (!all) {
-    // varm opp resten i bakgrunnen
-    const rest = bars.filter((b) => !bySlug.has(b.slug) && !cachedDetail(b.slug));
-    if (rest.length) mapLimit(rest, 2, (b) => getBarDetail(b.slug)).catch(() => {});
+// Legger til `prices` (alle priser) på hver bar ved å hente detaljsiden for ALLE barer (cachet i 6 t).
+// Venter maks WAIT_MS på henting; det som ikke er ferdig fylles fra lista og hentes videre i bakgrunnen.
+export async function withAllPrices(bars, { waitMs = WAIT_MS } = {}) {
+  const missing = bars.filter((b) => !cachedDetail(b.slug));
+  let incomplete = 0;
+  if (missing.length) {
+    const job = mapLimit(missing, CONCURRENCY, (b) => getBarDetail(b.slug));
+    await Promise.race([job, new Promise((r) => setTimeout(r, waitMs))]);
   }
-
-  return bars.map((b) => {
-    const d = bySlug.get(b.slug) || cachedDetail(b.slug);
+  const out = bars.map((b) => {
+    const d = cachedDetail(b.slug);
+    if (!d) incomplete++;
     const prices = d && Array.isArray(d.prices) && d.prices.length ? d.prices.map((p) => priceFromDetail(p, d)) : [priceFromListEntry(b)];
     return { ...b, prices, prices_source: d ? "bar_page" : "list" };
   });
+  out.incomplete = incomplete;
+  return out;
 }
 
 export const publicPrice = ({ _v, ...p }) => p;

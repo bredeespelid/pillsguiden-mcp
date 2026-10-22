@@ -59,7 +59,7 @@ Claude Desktop (lokalt, stdio):
 
 ## Hvordan prisene hentes
 
-Lista (`/liste/<sted>/__data.json`) viser bare prisen som gjelder i øyeblikket den hentes. Alle priser ligger på `/bar/<slug>/__data.json`, med gyldighet som fritekst («Gyldig mellom 15:00 og 21:00, mandag - lørdag»), som `src/prices.js` tolker. Detaljsidene hentes for barer som kan ha flere priser og caches i 6 timer (`DETAIL_CACHE_TTL_SECONDS`).
+Lista (`/liste/<sted>/__data.json`) viser bare prisen som gjelder i øyeblikket den hentes. Alle priser ligger på `/bar/<slug>/__data.json`, med gyldighet som fritekst («Gyldig mellom 15:00 og 21:00, mandag - lørdag»), som `src/prices.js` tolker. Detaljsidene hentes for alle barer (lista kan vise «Prisen er alltid gyldig» selv om baren har en egen dagspris), varmes opp ved oppstart og caches i 6 timer (`DETAIL_CACHE_TTL_SECONDS`). Kontroll 22.10.2026: 54 av 589 Oslo-barer har flere priser.
 
 ## Test uten nett
 
