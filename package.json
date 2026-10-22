@@ -1,12 +1,12 @@
 {
   "name": "pilsguiden-mcp",
-  "version": "1.4.0",
-  "description": "MCP-server for ølpriser fra pilsguiden.no",
+  "version": "1.5.0",
+  "description": "MCP-server for ølpriser fra pilsguiden.no og pubquizer fra Norges Quizforbund",
   "main": "src/http.js",
   "scripts": {
     "start": "node src/http.js",
     "stdio": "node src/stdio.js",
-    "test": "node test/run.mjs"
+    "test": "node test/run.mjs && node test/quiz.mjs"
   },
   "keywords": [],
   "author": "",
@@ -15,6 +15,7 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "devalue": "^6.0.3",
     "express": "^5.3.0",
+    "node-html-parser": "^9.0.5",
     "zod": "^4.6.7"
   },
   "type": "module",

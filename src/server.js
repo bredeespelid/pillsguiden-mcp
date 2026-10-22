@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { getList, filterBars, osloNow, ageDays } from "./pilsguiden.js";
+import { registerQuizTools } from "./quiz-tools.js";
 import {
   withAllPrices,
   applicablePrices,
@@ -96,12 +97,13 @@ const briefPrice = (p) => ({
 
 export function createServer() {
   const server = new McpServer(
-    { name: "pilsguiden", version: "1.4.0" },
+    { name: "pilsguiden", version: "1.5.0" },
     {
       instructions:
         "Ølpriser fra pilsguiden.no. Mange barer har flere priser (vanlig pris + happy hour med tidsvindu og ukedager). " +
         "For 'hvor er det billig pils?' bruk cheap_beer_now: uten 'when' vurderes hver pris for seg (happy hour inkludert, merket med vindu som '15–21, man–lør'); med 'when' (og evt. dag) brukes prisen som faktisk gjelder da. " +
-        "Presenter i listens rekkefølge (billigste glass først), oppgi størrelse og pris per halvliter, og vis tidsvinduet for happy hour. find_bar gir alle priser for én bar.",
+        "Presenter i listens rekkefølge (billigste glass først), oppgi størrelse og pris per halvliter, og vis tidsvinduet for happy hour. find_bar gir alle priser for én bar. " +
+        "Pubquiz: bruk find_quizzes (standard Oslo, i dag). Den viser også pilspris på quiz-tidspunktet der stedet finnes på Pilsguiden. Quizer med happens=null går annenhver uke/månedlig – si at man bør sjekke lenken.",
     }
   );
 
@@ -356,6 +358,7 @@ export function createServer() {
     }
   );
 
+  registerQuizTools(server);
   return server;
 }
 
@@ -405,4 +408,17 @@ export async function runAudit(place) {
   };
   auditCache.set(key, { at: Date.now(), data });
   return data;
+}
+
+// Eget endepunkt med bare quiz-verktøyene (/quiz/mcp).
+export function createQuizServer() {
+  const server = new McpServer(
+    { name: "pubquiz", version: "1.0.0" },
+    {
+      instructions:
+        "Pubquizer fra Norges Quizforbund (standard Oslo). Bruk find_quizzes med when ('i dag', 'tirsdag', dato). Quizer med happens=null går annenhver uke/månedlig – be brukeren sjekke lenken. beer viser pilspris på stedet ved quiz-start fra Pilsguiden.",
+    }
+  );
+  registerQuizTools(server);
+  return server;
 }

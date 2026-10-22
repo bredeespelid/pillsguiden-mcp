@@ -72,6 +72,36 @@ const details = new Map(
   ])
 );
 
+
+// ---- Norges Quizforbund (WordPress) ----
+const qrow = (city, venue, href, day, time, type) =>
+  `<tr style="height: 20px;"><td>&nbsp;</td><td>${city}</td><td>${href ? `<a class="broken_link" href="${href}">${venue}</a>` : venue}</td><td>${day}</td><td>${time}</td><td>${type}</td></tr>`;
+const qhead = (r) => `<tr style="height: 20px;"><td colspan="6" style="font-weight: bold;">${r}</td></tr>`;
+const QUIZ_HTML = `<p>Finn din pubquiz</p><table id="pubquiz-table"><tbody>
+${qhead("Akershus")}
+${qrow("Lillestrøm", "Puben på hjørnet", "", "Tirsdag", "19:00", "Allmenn")}
+${qhead("Oslo")}
+${qrow("Oslo", "Fru Burums", "http://fruburums.no/", "Mandag", "19:00", "Allmenn")}
+${qrow("Oslo", "Røverstaden", "https://www.facebook.com/roverstaden/", "Mandag (annenhver)", "19:00", "«Fakta om makta» – Samfunn og politikk")}
+${qrow("Oslo", "Proud Mary", "", "Mandag (Søndag)", "19:00", "The Office (1. mandag i måneden)")}
+${qrow("Oslo", "Bar Royal", "", "Tirsdag", "19:00", "Allmenn")}
+${qrow("Oslo", "Rabalder Bar Løkka", "https://www.instagram.com/rabalderbaroslo/", "Tirsdag", "18:00", "Allmenn")}
+${qrow("Oslo", "Glasset", "", "Tirsdag (annenhver, oddetallsuker)", "19:00", "Allmenn")}
+${qrow("Oslo", "Cultivate Food, Grünerløkka", "https://cultivatefood.no/quiz-night/", "1. tirsdag hver måned", "19:00", "Sjekk programmet")}
+${qrow("Oslo", "Vika Kino", "", "Tirsdag (siste tirsdag hver måned)", "19:00", "Film")}
+${qrow("Oslo", "Saskia", "", "Tirsdag (første i måneden)", "19:00", "Allmenn og musikk")}
+${qrow("Oslo", "SALT", "https://www.salted.no/quiz-paa-salt", "Tirsdag (utvalgte)", "19:00", "Popquiz")}
+${qrow("Oslo", "Kjøkken og Bar", "", "Oslo", "18:00", "Allmenn")}
+${qrow("Oslo", "Café Marienlyst («Hullet i veggen», Kirkeveien 104)", "https://www.facebook.com/p/Cafe-Marienlyst/", "Mandag", "18:30", "Allmenn")}
+${qrow("Oslo", "Destiny Pub", "", "Torsdag", "18:00", "Musikk")}
+${qrow("Oslo", "SIP", "", "Torsdag", "20:30", "Allmenn")}
+${qrow("Oslo", "Kulturhuset", "", "En torsdag i måneden (varierer)", "19:00", "IconaPopQuiz")}
+${qrow("Oslo", "Victor's Lounge", "", "TIrsdag", "?", "Allmenn")}
+${qhead("Vestland")}
+${qrow("Bergen", "Bergen Quizbar", "", "Torsdag", "20:00", "Allmenn")}
+</tbody></table>`;
+const quizBody = JSON.stringify([{ id: 109, modified: "2026-09-29T22:29:24", content: { rendered: QUIZ_HTML, protected: false } }]);
+
 export const requests = [];
 http
   .createServer((q, r) => {
@@ -79,6 +109,7 @@ http
     r.setHeader("content-type", "application/json");
     const m = q.url.match(/^\/bar\/([^/]+)\/__data\.json/);
     if (q.url.startsWith("/liste/oslo")) return r.end(listBody);
+    if (q.url.startsWith("/wp-json/wp/v2/pages")) return r.end(quizBody);
     if (m && details.has(m[1])) return r.end(details.get(m[1]));
     if (m) return r.end(JSON.stringify({ type: "data", nodes: [layout, { type: "error", error: { message: "Internal Error" } }] }));
     r.statusCode = 404;

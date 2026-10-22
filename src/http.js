@@ -1,7 +1,7 @@
 // HTTP-inngang (Streamable HTTP, stateless) – for hosting på Render, Fly.io, Railway, Cloud Run osv.
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer, runAudit } from "./server.js";
+import { createServer, createQuizServer, runAudit } from "./server.js";
 import { getList } from "./pilsguiden.js";
 import { withAllPrices } from "./prices.js";
 
@@ -21,7 +21,7 @@ app.use((req, res, next) => {
 });
 
 app.get("/", (_req, res) =>
-  res.json({ name: "pilsguiden-mcp", status: "ok", mcp_endpoint: "/mcp", source: "https://www.pilsguiden.no" })
+  res.json({ name: "pilsguiden-mcp", status: "ok", mcp_endpoint: "/mcp", quiz_mcp_endpoint: "/quiz/mcp", source: "https://www.pilsguiden.no" })
 );
 app.get("/health", (_req, res) => res.send("ok"));
 // Kontrollen tar 10–60 s: start i bakgrunnen og returner status til den er ferdig.
@@ -49,9 +49,9 @@ function checkAuth(req, res) {
   return false;
 }
 
-app.post("/mcp", async (req, res) => {
+const mcpHandler = (factory) => async (req, res) => {
   if (!checkAuth(req, res)) return;
-  const server = createServer();
+  const server = factory();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on("close", () => {
     transport.close();
@@ -66,12 +66,16 @@ app.post("/mcp", async (req, res) => {
       res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null });
     }
   }
-});
+};
+app.post("/mcp", mcpHandler(createServer));
+app.post("/quiz/mcp", mcpHandler(createQuizServer));
 
 const notAllowed = (_req, res) =>
   res.status(405).json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed (stateless server)" }, id: null });
 app.get("/mcp", notAllowed);
 app.delete("/mcp", notAllowed);
+app.get("/quiz/mcp", notAllowed);
+app.delete("/quiz/mcp", notAllowed);
 
 app.listen(PORT, () => {
   console.log(`pilsguiden-mcp lytter på :${PORT}/mcp`);

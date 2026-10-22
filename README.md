@@ -15,6 +15,17 @@ MCP-server som gir Claude (og andre MCP-klienter) tilgang til ølprisene på [pi
 
 Alle tar `place` (standard `oslo`). Prisene er per halvliter.
 
+## Pubquiz
+
+Quizlista til [Norges Quizforbund](https://www.norgesquizforbund.no/arrangementer/finn-din-pubquiz/) hentes via WordPress-API-et deres (cache 1 time).
+
+| Verktøy | Hva det gjør |
+|---|---|
+| `find_quizzes` | Quizer en dag (`i dag`, `tirsdag`, `2026-10-27`, eller `alle`), standard Oslo. Filtrer på type (musikk, film …), sted, klokkeslett. Tolker «annenhver», «oddetallsuker», «1. tirsdag hver måned», «siste i måneden»; `happens: null` = kanskje. Viser pilspris på stedet ved quiz-start fra Pilsguiden (`sort_by: beer_price`). |
+| `list_quiz_regions` | Fylker med antall quizer per ukedag. |
+
+Quiz-verktøyene er med på `/mcp` (sammen med pilsprisene) og alene på `/quiz/mcp`.
+
 ## Kjør lokalt
 
 ```bash
