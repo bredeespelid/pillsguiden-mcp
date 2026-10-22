@@ -1,7 +1,7 @@
 // HTTP-inngang (Streamable HTTP, stateless) – for hosting på Render, Fly.io, Railway, Cloud Run osv.
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer } from "./server.js";
+import { createServer, runAudit } from "./server.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const AUTH_TOKEN = process.env.MCP_AUTH_TOKEN || ""; // valgfritt: krev "Authorization: Bearer <token>"
@@ -22,6 +22,13 @@ app.get("/", (_req, res) =>
   res.json({ name: "pilsguiden-mcp", status: "ok", mcp_endpoint: "/mcp", source: "https://www.pilsguiden.no" })
 );
 app.get("/health", (_req, res) => res.send("ok"));
+app.get("/audit", async (req, res) => {
+  try {
+    res.json(await runAudit(typeof req.query.place === "string" ? req.query.place : undefined));
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
 
 function checkAuth(req, res) {
   if (!AUTH_TOKEN) return true;

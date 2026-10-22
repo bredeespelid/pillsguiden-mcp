@@ -11,7 +11,6 @@ import {
   getBarDetail,
   mapLimit,
   parseValidityText,
-  DAY_KEYS,
 } from "./prices.js";
 
 const DEFAULT_PLACE = process.env.DEFAULT_PLACE || "oslo";
@@ -349,44 +348,7 @@ export function createServer() {
     },
     async ({ place }) => {
       try {
-        const d = await getList(place || DEFAULT_PLACE);
-        const res = await mapLimit(d.bars, 8, (b) => getBarDetail(b.slug));
-        const multi = [];
-        const missed = [];
-        const failed = [];
-        const unparsed = new Map();
-        const counts = {};
-        d.bars.forEach((b, i) => {
-          const r = res[i];
-          if (!r.ok) return failed.push({ name: b.name, slug: b.slug, error: r.error });
-          const prices = r.value.prices || [];
-          counts[prices.length] = (counts[prices.length] || 0) + 1;
-          for (const p of prices) {
-            const v = parseValidityText(p.valid);
-            if (!v.parsed) unparsed.set(p.valid, (unparsed.get(p.valid) || 0) + 1);
-          }
-          if (prices.length > 1) {
-            const entry = {
-              name: b.name,
-              list_shows: 1,
-              bar_page_has: prices.length,
-              prices: prices.map((p) => `${p.price} kr – ${p.valid}`),
-            };
-            multi.push(entry);
-            if (!needsDetail(b)) missed.push(entry);
-          }
-        });
-        return json({
-          location: d.location_name,
-          bars_checked: d.bars.length,
-          price_count_distribution: counts,
-          bars_with_multiple_prices: multi.length,
-          not_caught_by_quick_check: missed,
-          unparsed_validity_texts: [...unparsed].map(([text, n]) => ({ text, count: n })),
-          fetch_errors: failed,
-          bars: multi,
-          day_keys: DAY_KEYS,
-        });
+        return json(await runAudit(place));
       } catch (e) {
         return fail(e);
       }
@@ -394,4 +356,52 @@ export function createServer() {
   );
 
   return server;
+}
+
+// Kontroll: henter detaljsiden for alle barer og sammenligner med lista. Resultatet caches i 30 min.
+const auditCache = new Map();
+export async function runAudit(place) {
+  const key = place || DEFAULT_PLACE;
+  const hit = auditCache.get(key);
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.data;
+  const d = await getList(key);
+  const res = await mapLimit(d.bars, 8, (b) => getBarDetail(b.slug));
+  const multi = [];
+  const missed = [];
+  const failed = [];
+  const unparsed = new Map();
+  const counts = {};
+  d.bars.forEach((b, i) => {
+    const r = res[i];
+    if (!r.ok) return failed.push({ name: b.name, slug: b.slug, error: r.error });
+    const prices = r.value.prices || [];
+    counts[prices.length] = (counts[prices.length] || 0) + 1;
+    for (const p of prices) {
+      const v = parseValidityText(p.valid);
+      if (!v.parsed) unparsed.set(p.valid, (unparsed.get(p.valid) || 0) + 1);
+    }
+    if (prices.length > 1) {
+      const entry = {
+        name: b.name,
+        list_shows: 1,
+        bar_page_has: prices.length,
+        prices: prices.map((p) => `${p.price} kr – ${p.valid}`),
+      };
+      multi.push(entry);
+      if (!needsDetail(b)) missed.push(entry);
+    }
+  });
+  const data = {
+    location: d.location_name,
+    checked_at: new Date().toISOString(),
+    bars_checked: d.bars.length,
+    price_count_distribution: counts,
+    bars_with_multiple_prices: multi.length,
+    not_caught_by_quick_check: missed,
+    unparsed_validity_texts: [...unparsed].map(([text, n]) => ({ text, count: n })),
+    fetch_errors: failed,
+    bars: multi,
+  };
+  auditCache.set(key, { at: Date.now(), data });
+  return data;
 }

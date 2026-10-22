@@ -10,7 +10,7 @@ MCP-server som gir Claude (og andre MCP-klienter) tilgang til ølprisene på [pi
 | `list_bars` | Hele listen med filter: makspris, bryggeri, fritekst (gate/navn), kun ordinære priser, sortering. |
 | `find_bar` | Slå opp én bar på navn. `prices` gir alle priser (vanlig + happy hour) med tidsvindu og ukedager. |
 | `get_price_stats` | Median/snitt for stedet sammenlignet med Norge. |
-| `audit_prices` | Vedlikehold: sjekker alle barer mot detaljsiden og rapporterer barer med flere priser og ukjente gyldighetstekster. |
+| `audit_prices` | Vedlikehold: sjekker alle barer mot detaljsiden og rapporterer barer med flere priser og ukjente gyldighetstekster. Også som `GET /audit?place=oslo`. |
 | `list_areas` | Bydeler med slug, f.eks. `oslo/grunerlokka`. |
 
 Alle tar `place` (standard `oslo`). Prisene er per halvliter.
