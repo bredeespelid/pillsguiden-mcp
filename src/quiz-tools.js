@@ -48,6 +48,72 @@ const hourOf = (time) => {
   return m ? Number(m[1]) + Number(m[2]) / 60 : 19;
 };
 
+export async function findQuizzes({ when, region, type, query, after, before, include_uncertain, sort_by, with_beer, limit } = {}) {
+  const { quizzes, modified } = await getQuizzes();
+  const all = fold(when || "").trim() === "alle" || fold(when || "").trim() === "all";
+  const date = all ? null : resolveDate(when);
+  const reg = fold(region || "Oslo");
+  let list = quizzes.filter((q) => reg === "alle" || reg === "all" || fold(q.region).includes(reg) || fold(q.city).includes(reg));
+  if (type) list = list.filter((q) => fold(q.type).includes(fold(type)));
+  if (query) list = list.filter((q) => fold(`${q.venue} ${q.city}`).includes(fold(query)));
+  if (after) list = list.filter((q) => q.time && hourOf(q.time) >= hourOf(after));
+  if (before) list = list.filter((q) => q.time && hourOf(q.time) < hourOf(before));
+
+  let rows = list.map((q) => ({ q, happens: date ? occursOn(q._sched, date) : null }));
+  if (date) rows = rows.filter((r) => r.happens === true || (r.happens === null && include_uncertain !== false && r.q._sched.days.includes(date.dow)));
+
+  // Pilspris på quiz-tidspunktet
+  if (with_beer !== false && rows.length) {
+    try {
+      const pg = await getList("oslo");
+      const matched = rows.map((r) => ({ r, bar: fold(r.q.region).includes("oslo") || fold(r.q.city).includes("oslo") ? matchBar(r.q.name, pg.bars) : null }));
+      const uniq = [...new Set(matched.filter((m) => m.bar).map((m) => m.bar))];
+      const enriched = new Map((await withAllPrices(uniq, { waitMs: 15000 })).map((b) => [b.slug, b]));
+      for (const { r, bar } of matched) {
+        if (!bar) continue;
+        const b = enriched.get(bar.slug);
+        const dow = date ? date.dow : r.q._sched.days[0] ?? 0;
+        const pool = applicablePrices(b.prices, dow, hourOf(r.q.time));
+        const p = [...pool].sort((x, y) => (x.price ?? 1e9) - (y.price ?? 1e9))[0];
+        if (!p) continue;
+        r.beer = {
+          pilsguiden_name: b.name,
+          pilsguiden_address: b.address,
+          price: p.price,
+          size_liters: p.size_liters,
+          price_per_half_liter: p.price_per_half_liter,
+          brewery: p.brewery,
+          window: p.window,
+          happy_hour: p.type === "time_limited",
+          price_checked: p.price_checked,
+        };
+      }
+    } catch (e) {
+      rows.beer_error = String(e.message || e);
+    }
+  }
+
+  const key = sort_by === "beer_price" ? (r) => r.beer?.price_per_half_liter ?? 1e9 : (r) => hourOf(r.q.time);
+  rows.sort((a, b) => key(a) - key(b) || hourOf(a.q.time) - hourOf(b.q.time) || a.q.name.localeCompare(b.q.name, "nb"));
+  const out = rows.slice(0, limit ?? 40).map((r) => ({
+    ...publicQuiz(r.q),
+    happens: date ? r.happens : undefined,
+    ...(r.beer ? { beer: r.beer } : {}),
+  }));
+  return {
+    source: QUIZ_PAGE,
+    list_updated: modified,
+    date: date ? `${DAY_NB[date.dow]} ${date.iso}` : "alle dager",
+    region: region || "Oslo",
+    matches: rows.length,
+    returned: out.length,
+    note:
+      "happens: true = går denne dagen, null = kanskje (annenhver uke / månedlig) – sjekk lenken. Lista vedlikeholdes av Norges Quizforbund og kan være utdatert. beer = pilspris på stedet ved quiz-start fra Pilsguiden (navnematch – nevn pilsguiden_name).",
+    ...(rows.beer_error ? { beer_error: rows.beer_error } : {}),
+    quizzes: out,
+  };
+}
+
 export function registerQuizTools(server) {
   server.registerTool(
     "find_quizzes",
@@ -74,71 +140,9 @@ export function registerQuizTools(server) {
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ when, region, type, query, after, before, include_uncertain, sort_by, with_beer, limit }) => {
+    async (args) => {
       try {
-        const { quizzes, modified } = await getQuizzes();
-        const all = fold(when || "").trim() === "alle" || fold(when || "").trim() === "all";
-        const date = all ? null : resolveDate(when);
-        const reg = fold(region || "Oslo");
-        let list = quizzes.filter((q) => reg === "alle" || reg === "all" || fold(q.region).includes(reg) || fold(q.city).includes(reg));
-        if (type) list = list.filter((q) => fold(q.type).includes(fold(type)));
-        if (query) list = list.filter((q) => fold(`${q.venue} ${q.city}`).includes(fold(query)));
-        if (after) list = list.filter((q) => q.time && hourOf(q.time) >= hourOf(after));
-        if (before) list = list.filter((q) => q.time && hourOf(q.time) < hourOf(before));
-
-        let rows = list.map((q) => ({ q, happens: date ? occursOn(q._sched, date) : null }));
-        if (date) rows = rows.filter((r) => r.happens === true || (r.happens === null && include_uncertain !== false && r.q._sched.days.includes(date.dow)));
-
-        // Pilspris på quiz-tidspunktet
-        if (with_beer !== false && rows.length) {
-          try {
-            const pg = await getList("oslo");
-            const matched = rows.map((r) => ({ r, bar: fold(r.q.region).includes("oslo") || fold(r.q.city).includes("oslo") ? matchBar(r.q.name, pg.bars) : null }));
-            const uniq = [...new Set(matched.filter((m) => m.bar).map((m) => m.bar))];
-            const enriched = new Map((await withAllPrices(uniq, { waitMs: 15000 })).map((b) => [b.slug, b]));
-            for (const { r, bar } of matched) {
-              if (!bar) continue;
-              const b = enriched.get(bar.slug);
-              const dow = date ? date.dow : r.q._sched.days[0] ?? 0;
-              const pool = applicablePrices(b.prices, dow, hourOf(r.q.time));
-              const p = [...pool].sort((x, y) => (x.price ?? 1e9) - (y.price ?? 1e9))[0];
-              if (!p) continue;
-              r.beer = {
-                pilsguiden_name: b.name,
-                pilsguiden_address: b.address,
-                price: p.price,
-                size_liters: p.size_liters,
-                price_per_half_liter: p.price_per_half_liter,
-                brewery: p.brewery,
-                window: p.window,
-                happy_hour: p.type === "time_limited",
-                price_checked: p.price_checked,
-              };
-            }
-          } catch (e) {
-            rows.beer_error = String(e.message || e);
-          }
-        }
-
-        const key = sort_by === "beer_price" ? (r) => r.beer?.price_per_half_liter ?? 1e9 : (r) => hourOf(r.q.time);
-        rows.sort((a, b) => key(a) - key(b) || hourOf(a.q.time) - hourOf(b.q.time) || a.q.name.localeCompare(b.q.name, "nb"));
-        const out = rows.slice(0, limit ?? 40).map((r) => ({
-          ...publicQuiz(r.q),
-          happens: date ? r.happens : undefined,
-          ...(r.beer ? { beer: r.beer } : {}),
-        }));
-        return json({
-          source: QUIZ_PAGE,
-          list_updated: modified,
-          date: date ? `${DAY_NB[date.dow]} ${date.iso}` : "alle dager",
-          region: region || "Oslo",
-          matches: rows.length,
-          returned: out.length,
-          note:
-            "happens: true = går denne dagen, null = kanskje (annenhver uke / månedlig) – sjekk lenken. Lista vedlikeholdes av Norges Quizforbund og kan være utdatert. beer = pilspris på stedet ved quiz-start fra Pilsguiden (navnematch – nevn pilsguiden_name).",
-          ...(rows.beer_error ? { beer_error: rows.beer_error } : {}),
-          quizzes: out,
-        });
+        return json(await findQuizzes(args));
       } catch (e) {
         return fail(e);
       }

@@ -2,6 +2,7 @@
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, createQuizServer, runAudit } from "./server.js";
+import { findQuizzes } from "./quiz-tools.js";
 import { getList } from "./pilsguiden.js";
 import { withAllPrices } from "./prices.js";
 
@@ -24,6 +25,22 @@ app.get("/", (_req, res) =>
   res.json({ name: "pilsguiden-mcp", status: "ok", mcp_endpoint: "/mcp", quiz_mcp_endpoint: "/quiz/mcp", source: "https://www.pilsguiden.no" })
 );
 app.get("/health", (_req, res) => res.send("ok"));
+// Les-adresse for quiz (samme som find_quizzes): /quiz?when=tirsdag&region=oslo&type=musikk
+app.get("/quiz", async (req, res) => {
+  try {
+    const q = req.query;
+    const s = (k) => (typeof q[k] === "string" && q[k] ? q[k] : undefined);
+    res.json(
+      await findQuizzes({
+        when: s("when"), region: s("region"), type: s("type"), query: s("query"), after: s("after"), before: s("before"),
+        sort_by: s("sort_by"), include_uncertain: s("include_uncertain") === "false" ? false : undefined,
+        with_beer: s("with_beer") === "false" ? false : undefined, limit: s("limit") ? Number(s("limit")) : undefined,
+      })
+    );
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
 // Kontrollen tar 10–60 s: start i bakgrunnen og returner status til den er ferdig.
 const audits = new Map(); // place -> { status, started, data, error }
 app.get("/audit", (req, res) => {
