@@ -23,22 +23,34 @@ const tokens = (s) =>
     .split(/[^a-z0-9]+/)
     .filter((t) => t.length >= 2 && !STOP.has(t));
 
-// Finn Pilsguiden-bar med samme navn. Alle "viktige" ord i det korteste navnet må finnes i det andre.
+// Stedsnavn er svake signaler: "Rabalder Bar Løkka" må ikke matche "Løkka Bar og Kjøkken" på "løkka" alene.
+const PLACES = new Set(
+  "lokka grunerlokka torshov majorstuen majorstua sentrum bjorvika toyen gronland frogner sagene bislett storo nydalen vika aker brygge tjuvholmen skoyen smestad okern loren manglerud carl berner sorenga kampen vulkan youngstorget torggata holmlia lambertseter ullevaal ulleval st hanshaugen adamstuen bjolsen sinsen rodelokka vaterland solli homansbyen marienlyst ekeberg nordstrand bryn helsfyr hasle".split(" ")
+);
+const compact = (ts) => ts.join("");
+
+// Finn Pilsguiden-bar med samme navn. Alle "viktige" ord i det korteste navnet må finnes i det andre,
+// og minst ett felles ord må være noe annet enn et stedsnavn.
 export function matchBar(quizName, bars) {
   const q = tokens(quizName);
   if (!q.length) return null;
-  const shortOnly = !q.some((t) => t.length >= 4); // f.eks. "SIP", "200": krev identiske navn
+  const onlyPlaces = q.every((t) => PLACES.has(t));
+  const shortOnly = !q.some((t) => t.length >= 4); // f.eks. "SIP", "200"
   let best = null;
   for (const b of bars) {
     const t = tokens(b.name);
     if (!t.length) continue;
-    if (shortOnly && (t.length !== q.length || !q.every((x) => t.includes(x)))) continue;
-    const [small, big] = q.length <= t.length ? [q, new Set(t)] : [t, new Set(q)];
-    if (!small.every((x) => big.has(x))) continue;
-    const union = new Set([...q, ...t]).size;
-    const score = small.length / union;
+    let score;
+    if (compact(q) === compact(t)) score = 2; // "Flyfisher" = "The Fly Fisher"
+    else {
+      if (shortOnly || onlyPlaces) continue; // krever identisk navn
+      const [small, big] = q.length <= t.length ? [q, new Set(t)] : [t, new Set(q)];
+      if (!small.every((x) => big.has(x))) continue;
+      if (small.every((x) => PLACES.has(x))) continue;
+      score = small.length / new Set([...q, ...t]).size;
+    }
     if (!best || score > best.score) best = { bar: b, score, tie: false };
-    else if (score === best.score) best.tie = true;
+    else if (score === best.score && best.bar.name !== b.name) best.tie = true;
   }
   return best && !best.tie ? best.bar : null;
 }

@@ -36,7 +36,7 @@ assert.equal(D("27.10").iso, "2026-10-27");
 console.log("tidsplan: ok");
 
 // ---- navnematch mot Pilsguiden ----
-const bars = ["Rabalder Bar Oslo", "O'Connor's Irish Pub - Oslo", "Lincoln Sports Bar", "Fru Burums", "Fryd Gastropub Løren", "Fryd Manglerud", "The Good Knight", "Los Tacos Torshov", "Los Tacos Majorstuen"].map((name) => ({ name }));
+const bars = ["Løkka Bar og Kjøkken", "The Fly Fisher", "Jagger Løkka", "Rabalder Bar Oslo", "O'Connor's Irish Pub - Oslo", "Lincoln Sports Bar", "Fru Burums", "Fryd Gastropub Løren", "Fryd Manglerud", "The Good Knight", "Los Tacos Torshov", "Los Tacos Majorstuen"].map((name) => ({ name }));
 const mb = (n) => matchBar(n, bars)?.name ?? null;
 assert.equal(mb("Rabalder Bar Løkka"), "Rabalder Bar Oslo");
 assert.equal(mb("O'Connors"), "O'Connor's Irish Pub - Oslo");
@@ -45,6 +45,8 @@ assert.equal(mb("Fryd Løren"), "Fryd Gastropub Løren");
 assert.equal(mb("The Good Knight"), "The Good Knight");
 assert.equal(mb("Lincoln Pub, Torshov"), "Lincoln Sports Bar"); // samme sted (Vogts gate, Torshov)
 assert.equal(mb("Smelteverket"), null);
+assert.equal(mb("Løkka Bar & Kjøkken"), "Løkka Bar og Kjøkken");
+assert.equal(mb("Flyfisher"), "The Fly Fisher");
 assert.equal(mb("Los Tacos"), null); // tvetydig
 console.log("navnematch: ok");
 
