@@ -22,12 +22,22 @@ app.get("/", (_req, res) =>
   res.json({ name: "pilsguiden-mcp", status: "ok", mcp_endpoint: "/mcp", source: "https://www.pilsguiden.no" })
 );
 app.get("/health", (_req, res) => res.send("ok"));
-app.get("/audit", async (req, res) => {
-  try {
-    res.json(await runAudit(typeof req.query.place === "string" ? req.query.place : undefined));
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
+// Kontrollen tar 10–60 s: start i bakgrunnen og returner status til den er ferdig.
+const audits = new Map(); // place -> { status, started, data, error }
+app.get("/audit", (req, res) => {
+  const place = typeof req.query.place === "string" && req.query.place ? req.query.place : "oslo";
+  let a = audits.get(place);
+  const stale = a && a.status !== "running" && Date.now() - a.started > 30 * 60 * 1000;
+  if (!a || stale) {
+    a = { status: "running", started: Date.now() };
+    audits.set(place, a);
+    runAudit(place)
+      .then((data) => Object.assign(a, { status: "done", data }))
+      .catch((e) => Object.assign(a, { status: "error", error: String(e.message || e) }));
   }
+  if (a.status === "done") return res.json(a.data);
+  if (a.status === "error") return res.status(500).json({ error: a.error });
+  res.status(202).json({ status: "running", seconds: Math.round((Date.now() - a.started) / 1000), hint: "Prøv igjen om litt." });
 });
 
 function checkAuth(req, res) {
