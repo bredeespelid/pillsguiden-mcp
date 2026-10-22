@@ -117,8 +117,10 @@ export function osloNow(date = new Date()) {
       year: "numeric", month: "2-digit", day: "2-digit", hourCycle: "h23",
     }).formatToParts(date).map((p) => [p.type, p.value])
   );
+  const wd = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Oslo", weekday: "short" }).format(date);
   return {
     hour: Number(parts.hour), minute: Number(parts.minute), weekday: parts.weekday,
+    day: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(wd), // 0 = mandag
     label: `${parts.weekday} ${parts.day}.${parts.month}.${parts.year} kl ${parts.hour}:${parts.minute}`,
   };
 }

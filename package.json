@@ -1,11 +1,12 @@
 {
   "name": "pilsguiden-mcp",
-  "version": "1.0.0",
+  "version": "1.4.0",
   "description": "MCP-server for ølpriser fra pilsguiden.no",
   "main": "src/http.js",
   "scripts": {
     "start": "node src/http.js",
-    "stdio": "node src/stdio.js"
+    "stdio": "node src/stdio.js",
+    "test": "node test/run.mjs"
   },
   "keywords": [],
   "author": "",

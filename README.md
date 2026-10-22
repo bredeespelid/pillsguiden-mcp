@@ -6,10 +6,11 @@ MCP-server som gir Claude (og andre MCP-klienter) tilgang til ølprisene på [pi
 
 | Verktøy | Hva det gjør |
 |---|---|
-| `cheap_beer_now` | «Hvor er det billig pils?» Viser som standard de billigste prisene inkl. happy hour med sluttid, sortert på glasspris (det du betaler, `sort_by: half_liter` for omregnet pris). Med `when` (nå, 18, 21:30) filtreres det på tidspunkt. |
+| `cheap_beer_now` | «Hvor er det billig pils?» Én rad per bar med billigste pris + `other_prices`. Uten `when` er happy hour med (merket «15–21, man–lør»); med `when` (nå, 18, «søndag 18») og `day` brukes prisen som faktisk gjelder da. Sortert på glasspris. |
 | `list_bars` | Hele listen med filter: makspris, bryggeri, fritekst (gate/navn), kun ordinære priser, sortering. |
-| `find_bar` | Slå opp én bar på navn. |
+| `find_bar` | Slå opp én bar på navn. `prices` gir alle priser (vanlig + happy hour) med tidsvindu og ukedager. |
 | `get_price_stats` | Median/snitt for stedet sammenlignet med Norge. |
+| `audit_prices` | Vedlikehold: sjekker alle barer mot detaljsiden og rapporterer barer med flere priser og ukjente gyldighetstekster. |
 | `list_areas` | Bydeler med slug, f.eks. `oslo/grunerlokka`. |
 
 Alle tar `place` (standard `oslo`). Prisene er per halvliter.
@@ -56,7 +57,17 @@ Claude Desktop (lokalt, stdio):
 { "mcpServers": { "pilsguiden": { "command": "node", "args": ["/sti/til/pilsguiden-mcp/src/stdio.js"] } } }
 ```
 
+## Hvordan prisene hentes
+
+Lista (`/liste/<sted>/__data.json`) viser bare prisen som gjelder i øyeblikket den hentes. Alle priser ligger på `/bar/<slug>/__data.json`, med gyldighet som fritekst («Gyldig mellom 15:00 og 21:00, mandag - lørdag»), som `src/prices.js` tolker. Detaljsidene hentes for barer som kan ha flere priser og caches i 6 timer (`DETAIL_CACHE_TTL_SECONDS`).
+
 ## Test uten nett
+
+```bash
+npm test
+```
+
+Eller manuelt:
 
 ```bash
 node test/mock-pilsguiden.mjs &

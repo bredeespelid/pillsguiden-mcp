@@ -1,14 +1,83 @@
+// Lokal kopi av pilsguiden.no for testing (liste + detaljsider), med data slik de så ut 22.10.2026.
+// Kjør: node test/mock-pilsguiden.mjs  →  PILSGUIDEN_BASE_URL=http://localhost:4010 npm start
 import http from "node:http";
 import { stringify } from "devalue";
-const bar=(id,name,address,brewery,size,price,pint,checked,valid_to,def)=>({id,name,address,slug:name.toLowerCase().replace(/\W+/g,"-"),location:25,brewery,size,price,pint,price_checked:checked,valid_to,default_price:def,NextLoc:{id:0,name:"",slug:""}});
-const list={location_id:1,stats:{location_name:"Oslo",mean:119,median:120,count:589,parent_id:1954,parent_name:"Norge",parent_count:1622,parent_mean:123,parent_median:124},
-bars:[bar(1689,"Doug's Hamburgers Aker Brygge","Fjordalléen 4, 0250 Oslo","Budweiser",0.5,55,55,"2026-10-16T17:16:19+02:00","Prisen er alltid gyldig",true),
-bar(1705,"Phuket Restaurant Oslo","Herslebs gate 4a, 0561 Oslo","Ringnes",0.5,56,56,"2026-10-19T20:56:34+02:00","Prisen er alltid gyldig",true),
-bar(1537,"Destiny Pub Oslo","Bernt Ankers gate 37, 0179 Oslo","1489",0.5,59,59,"2026-10-09T12:45:54+02:00","Gyldig frem til kl 21",false),
-bar(1792,"SIP Oslo","Storgata 13, 0155 Oslo","Hansa",0.4,49,61,"2026-10-17T23:50:23+02:00","Gyldig frem til kl 21",false),
-bar(1082,"Bar Royal","Hausmanns gate 8B, 0182 Oslo","Ringnes",0.5,69,69,"2026-09-11T18:34:46+02:00","Prisen gjelder utenom happy hour",true),
-bar(1469,"Anam Cara Bar Oslo","Rostockgata 42, 0194 Oslo","Frydenlund",0.4,66,82,"2025-09-06T13:26:47+02:00","Gyldig frem til kl 19",false),
-bar(656,"Cafe Stolen","Helgesens gate 32, 0553 Oslo","Hansa",0.5,75,75,"2026-09-16T17:57:23+02:00","Prisen gjelder til stengetid",false)],
-links:[{id:2,name:"Grünerløkka",slug:"grunerlokka"},{id:3,name:"Sentrum",slug:"sentrum"}],breadcrumb:[{name:"Oslo",slug:"oslo"}]};
-const body=JSON.stringify({type:"data",nodes:[{type:"data",data:JSON.parse(stringify({admin:false,consent:false})),uses:{}},{type:"data",data:JSON.parse(stringify({list})),uses:{}}]});
-http.createServer((q,r)=>{ if(q.url.startsWith("/liste/oslo")){r.setHeader("content-type","application/json");r.end(body)} else {r.statusCode=404;r.end("{}")}}).listen(4010);
+
+// [id, navn, adresse, bryggeri, størrelse, [[pris, pint, sjekket, gyldig, aktiv], ...]]
+const BARS = [
+  [1689, "Doug's Hamburgers Aker Brygge", "Fjordalléen 4, 0250 Oslo", "Budweiser", 0.5, [[55, 55, "2026-10-16T17:16:19+02:00", "Prisen er alltid gyldig", true]]],
+  [1705, "Phuket Restaurant Oslo", "Herslebs gate 4a, 0561 Oslo", "Ringnes", 0.5, [[56, 56, "2026-10-19T20:56:34+02:00", "Prisen er alltid gyldig", true]]],
+  [434, "Döner Bros", "Osterhaus' gate 12, 0183 Oslo", "Nordlands Pils", 0.4, [[54, 68, "2026-04-23T19:00:50+02:00", "Prisen er alltid gyldig", true]]],
+  [1792, "SIP Oslo", "Storgata 13, 0155 Oslo", "Hansa", 0.4, [
+    [68, 85, "2026-10-09T23:40:45+02:00", "Gyldig når ingen annen pris gjelder", true],
+    [49, 61, "2026-10-17T23:50:23+02:00", "Gyldig mellom 15:00 og 21:00, mandag - lørdag", false],
+  ]],
+  [1537, "Destiny Pub Oslo", "Bernt Ankers gate 37, 0179 Oslo", "1489", 0.5, [
+    [79, 79, "2026-10-15T18:53:30+02:00", "Gyldig når ingen annen pris gjelder", true],
+    [59, 59, "2026-10-09T12:45:54+02:00", "Gyldig mellom 16:00 og 21:00, Alle dager", false],
+  ]],
+  [1082, "Bar Royal", "Hausmanns gate 8B, 0182 Oslo", "Ringnes", 0.5, [
+    [69, 69, "2026-09-11T18:34:46+02:00", "Gyldig når ingen annen pris gjelder", false],
+    [59, 59, "2026-07-11T12:47:34+02:00", "Gyldig før kl 15:00, Alle dager", true],
+  ]],
+  [656, "Cafe Stolen", "Helgesens gate 32, 0553 Oslo", "Hansa", 0.5, [
+    [83, 83, "2026-05-26T21:03:08+02:00", "Gyldig når ingen annen pris gjelder", true],
+    [75, 75, "2026-09-16T17:57:23+02:00", "Gyldig hele åpningstiden, onsdag", false],
+  ]],
+  [701, "The Old Irish Pub - Majorstuen", "Kirkeveien 64a, 0364 Oslo", "Carlsberg", 0.4, [
+    [109, 136, "2026-10-02T18:34:29+02:00", "Gyldig når ingen annen pris gjelder", true],
+    [49, 61, "2026-10-04T20:07:15+02:00", "Gyldig mellom 20:00 og 23:00, Alle dager", false],
+  ]],
+];
+
+const slug = (n) => n.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const LIST_TEXT = { "Gyldig når ingen annen pris gjelder": "Prisen gjelder utenom happy hour" };
+
+// Lista viser kun den aktive prisen (slik nettsiden gjør).
+const list = {
+  location_id: 1,
+  stats: { location_name: "Oslo", mean: 119, median: 120, count: 589, parent_id: 1954, parent_name: "Norge", parent_count: 1622, parent_mean: 123, parent_median: 124 },
+  bars: BARS.map(([id, name, address, brewery, size, prices]) => {
+    const [price, pint, checked, valid] = prices.find((p) => p[4]);
+    const isDefault = /alltid|ingen annen/.test(valid);
+    return { id, name, address, slug: slug(name), location: 25, brewery, size, price, pint, price_checked: checked, valid_to: LIST_TEXT[valid] || valid, default_price: isDefault, NextLoc: { id: 0, name: "", slug: "" } };
+  }),
+  links: [{ id: 2, name: "Grünerløkka", slug: "grunerlokka" }, { id: 3, name: "Sentrum", slug: "sentrum" }],
+  breadcrumb: [{ name: "Oslo", slug: "oslo" }],
+};
+
+const node = (v) => ({ type: "data", data: JSON.parse(stringify(v)), uses: {} });
+const layout = node({ admin: false, consent: false });
+const listBody = JSON.stringify({ type: "data", nodes: [layout, node({ list })] });
+const details = new Map(
+  BARS.map(([id, name, address, brewery, size, prices], i) => [
+    slug(name),
+    JSON.stringify({
+      type: "data",
+      nodes: [
+        layout,
+        node({
+          barObj: {
+            id, slug: slug(name), name, address, orgnummer: "", osm_id: "", linked_bar: false, location: 25,
+            latitude: 59.9, longitude: 10.7, drink_id: 1, size, brewery_id: 2, brewery,
+            prices: prices.map(([price, pint, price_checked, valid, active], j) => ({ id: id * 10 + j, price, pint, price_checked, valid, active })),
+          },
+        }),
+      ],
+    }),
+  ])
+);
+
+export const requests = [];
+http
+  .createServer((q, r) => {
+    requests.push(q.url);
+    r.setHeader("content-type", "application/json");
+    const m = q.url.match(/^\/bar\/([^/]+)\/__data\.json/);
+    if (q.url.startsWith("/liste/oslo")) return r.end(listBody);
+    if (m && details.has(m[1])) return r.end(details.get(m[1]));
+    if (m) return r.end(JSON.stringify({ type: "data", nodes: [layout, { type: "error", error: { message: "Internal Error" } }] }));
+    r.statusCode = 404;
+    r.end("{}");
+  })
+  .listen(Number(process.env.MOCK_PORT || 4010));

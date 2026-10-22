@@ -1,9 +1,21 @@
 // MCP-server for Pilsguiden – ølpriser i Norge.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getList, filterBars, osloNow, parseValidity, validAt, ageDays } from "./pilsguiden.js";
+import { getList, filterBars, osloNow, ageDays } from "./pilsguiden.js";
+import {
+  withAllPrices,
+  applicablePrices,
+  publicPrice,
+  dayIndex,
+  needsDetail,
+  getBarDetail,
+  mapLimit,
+  parseValidityText,
+  DAY_KEYS,
+} from "./prices.js";
 
 const DEFAULT_PLACE = process.env.DEFAULT_PLACE || "oslo";
+const DAY_NB = ["mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag", "søndag"];
 
 const placeSchema = z
   .string()
@@ -15,12 +27,82 @@ const placeSchema = z
 const json = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj, null, 2) }] });
 const fail = (err) => ({ isError: true, content: [{ type: "text", text: String(err?.message || err) }] });
 
+const hhmm = (h) => `${String(Math.floor(h)).padStart(2, "0")}:${String(Math.round((h % 1) * 60)).padStart(2, "0")}`;
+
+// "nå" | "18" | "18:30" | 21.5 | "søndag 18" | "i morgen 20"  (+ valgfri day-parameter)
+function parseWhen(when, dayArg, now) {
+  const w = when == null ? "" : String(when).trim().toLowerCase();
+  let day = now.day;
+  let hour = null;
+  let explicitDay = false;
+
+  const setDay = (word) => {
+    const t = String(word).trim().toLowerCase();
+    if (!t || t === "i dag" || t === "idag" || t === "today") return true;
+    if (t === "i morgen" || t === "imorgen" || t === "tomorrow") {
+      day = (now.day + 1) % 7;
+      explicitDay = true;
+      return true;
+    }
+    const i = dayIndex(t);
+    if (i < 0) return false;
+    day = i;
+    explicitDay = true;
+    return true;
+  };
+
+  if (dayArg != null && !setDay(dayArg)) throw new Error(`Forstod ikke dagen '${dayArg}'. Bruk f.eks. 'søndag' eller 'i morgen'.`);
+
+  if (!w) return { hour: null, day, explicitDay };
+  if (["nå", "na", "now"].includes(w)) return { hour: now.hour + now.minute / 60, day: explicitDay ? day : now.day, explicitDay, isNow: !explicitDay };
+
+  let rest = w;
+  for (const re of [/\bi\s*morgen\b|\bimorgen\b|\btomorrow\b/, /\bi\s*dag\b|\bidag\b/]) {
+    const m = rest.match(re);
+    if (m) {
+      setDay(m[0]);
+      rest = rest.replace(re, " ");
+    }
+  }
+  const word = rest.match(/[a-zæøå]{3,}/);
+  if (word && !/^kl$/.test(word[0]) && dayIndex(word[0]) >= 0) {
+    setDay(word[0]);
+    rest = rest.replace(word[0], " ");
+  }
+  const m = rest.match(/(\d{1,2})(?:[:.,](\d{1,2}))?/);
+  if (!m) {
+    if (explicitDay) return { hour: null, day, explicitDay };
+    throw new Error("Forstod ikke tidspunktet. Bruk 'nå' eller f.eks. '18', '18:30', 'søndag 18'.");
+  }
+  const frac = m[2] ? (rest.includes(":") || m[2].length === 2 ? Number(m[2]) / 60 : Number("0." + m[2])) : 0;
+  hour = Number(m[1]) + frac;
+  if (hour >= 24) hour -= 24;
+  return { hour, day, explicitDay };
+}
+
+const sortKey = (by) => (by === "half_liter" ? "price_per_half_liter" : "price");
+const cmpPrices = (key) => (a, b) =>
+  (a[key] ?? 1e9) - (b[key] ?? 1e9) ||
+  (a.price_per_half_liter ?? 1e9) - (b.price_per_half_liter ?? 1e9) ||
+  String(b.price_checked).localeCompare(String(a.price_checked));
+
+const briefPrice = (p) => ({
+  price: p.price,
+  size_liters: p.size_liters,
+  price_per_half_liter: p.price_per_half_liter,
+  type: p.type,
+  window: p.window,
+  validity: p.validity,
+});
+
 export function createServer() {
   const server = new McpServer(
-    { name: "pilsguiden", version: "1.3.0" },
+    { name: "pilsguiden", version: "1.4.0" },
     {
       instructions:
-        "Ølpriser fra pilsguiden.no. For 'hvor er det billig pils?' bruk cheap_beer_now. Listen er sortert på glasspris (det du betaler) inkl. happy hour – presenter i samme rekkefølge, med billigste glass først. Oppgi størrelse og pris per halvliter, og merk happy hour med 'til kl X'. Med 'when' filtreres det på tidspunktet.",
+        "Ølpriser fra pilsguiden.no. Mange barer har flere priser (vanlig pris + happy hour med tidsvindu og ukedager). " +
+        "For 'hvor er det billig pils?' bruk cheap_beer_now: uten 'when' vurderes hver pris for seg (happy hour inkludert, merket med vindu som '15–21, man–lør'); med 'when' (og evt. dag) brukes prisen som faktisk gjelder da. " +
+        "Presenter i listens rekkefølge (billigste glass først), oppgi størrelse og pris per halvliter, og vis tidsvinduet for happy hour. find_bar gir alle priser for én bar.",
     }
   );
 
@@ -29,7 +111,7 @@ export function createServer() {
     {
       title: "Ølpriser – liste",
       description:
-        "Henter barer/utesteder med pilspris fra pilsguiden.no for et sted (standard Oslo). Prisene er normalisert per halvliter. Kan filtreres og sorteres.",
+        "Henter barer/utesteder med pilspris fra pilsguiden.no for et sted (standard Oslo). Toppnivå-prisen er den som gjelder akkurat nå på nettsiden; `prices` har alle priser per bar. Kan filtreres og sorteres.",
       inputSchema: {
         place: placeSchema,
         max_price: z.number().optional().describe("Maks pris per halvliter (NOK)"),
@@ -46,13 +128,14 @@ export function createServer() {
       try {
         const data = await getList(place || DEFAULT_PLACE);
         const { total, bars } = filterBars(data.bars, filters);
+        const enriched = await withAllPrices(bars);
         return json({
           location: data.location_name,
           source: data.url,
           median_price: data.stats.median,
           matches: total,
           returned: bars.length,
-          bars,
+          bars: enriched.map((b) => ({ ...b, prices: b.prices.map(publicPrice) })),
         });
       } catch (e) {
         return fail(e);
@@ -65,93 +148,111 @@ export function createServer() {
     {
       title: "Billigste pils (inkl. happy hour)",
       description:
-        "Svarer på 'hvor er det billig pils?'. Standard (uten 'when'): de billigste prisene totalt, INKLUDERT happy hour, med når happy hour slutter (valid_until_hour). " +
-        "Med 'when' ('nå', '18', '21:30'): bare priser som faktisk gjelder på det tidspunktet. " +
-        "Sortert etter glasspris (det du betaler) som standard. I svaret: START med første forslag (billigst glass), oppgi glasspris med størrelse og pris per halvliter, merk happy hour med 'til kl X'. Nevn cheapest_all_evening til slutt som alternativ om happy hour er over.",
+        "Svarer på 'hvor er det billig pils?'. Én rad per bar med den billigste prisen, pluss `other_prices` med barens andre priser. " +
+        "Uten 'when': hver pris vurderes for seg, så happy hour-priser er med og merket med vindu (f.eks. '15–21, man–lør'). " +
+        "Med 'when' ('nå', '18', '21:30', 'søndag 18') og evt. 'day': bare prisen som faktisk gjelder på den ukedagen og det klokkeslettet (Oslo-tid); utenfor happy hour brukes vanlig pris. " +
+        "Sortert på glasspris (det du betaler) som standard. Presenter i samme rekkefølge, oppgi størrelse og pris per halvliter, og vis tidsvinduet for happy hour.",
       inputSchema: {
         place: placeSchema,
         when: z
           .union([z.string(), z.number()])
           .optional()
-          .describe("Valgfritt. Når brukeren skal ut, Oslo-tid: 'nå' eller klokkeslett som '18', '18:30'. Utelat for å vise alle billigste priser inkl. happy hour."),
+          .describe("Valgfritt. 'nå', klokkeslett ('18', '18:30') eller dag + tid ('søndag 18', 'i morgen 20'). Utelat for å se alle billigste priser inkl. happy hour."),
+        day: z.string().optional().describe("Valgfritt. Ukedag ('søndag', 'fredag', 'i morgen'). Standard: i dag."),
         sort_by: z
           .enum(["half_liter", "glass"])
           .optional()
           .describe("'glass' (standard: billigste glass uansett størrelse) eller 'half_liter' (omregnet til 0,5 l)"),
         max_price: z.number().optional().describe("Maks pris per halvliter (NOK)"),
-        max_age_days: z
-          .number()
-          .int()
-          .optional()
-          .describe("Ignorer priser sjekket for mer enn så mange dager siden (standard 365)"),
+        max_age_days: z.number().int().optional().describe("Ignorer priser sjekket for mer enn så mange dager siden (standard 365)"),
         limit: z.number().int().min(1).max(50).optional().describe("Antall forslag (standard 10)"),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ place, when, sort_by, max_price, max_age_days, limit }) => {
+    async ({ place, when, day, sort_by, max_price, max_age_days, limit }) => {
       try {
         const now = osloNow();
-        const w = when == null ? "" : String(when).trim().toLowerCase();
-        let hour = null; // null = ingen tidsfilter
-        let label = "hele dagen (inkl. happy hour)";
-        if (w === "nå" || w === "na" || w === "now") {
-          hour = now.hour + now.minute / 60;
-          label = now.label;
-        } else if (w) {
-          const m = w.match(/(\d{1,2})(?:[:.,](\d{1,2}))?/);
-          if (!m) return fail("Forstod ikke tidspunktet. Bruk 'nå' eller f.eks. '18', '18:30'.");
-          const frac = m[2] ? (w.includes(":") || m[2].length === 2 ? Number(m[2]) / 60 : Number("0." + m[2])) : 0;
-          hour = Number(m[1]) + frac;
-          label = `kl ${String(Math.floor(hour)).padStart(2, "0")}:${String(Math.round((hour % 1) * 60)).padStart(2, "0")}`;
-        }
+        const t = parseWhen(when, day, now);
+        const timeFilter = t.hour != null;
+        const label = !timeFilter
+          ? t.explicitDay
+            ? `${DAY_NB[t.day]} (alle tider, inkl. happy hour)`
+            : "alle tider (inkl. happy hour)"
+          : t.isNow
+            ? now.label
+            : `${DAY_NB[t.day]} kl ${hhmm(t.hour)}`;
+
         const d = await getList(place || DEFAULT_PLACE);
+        const bars = await withAllPrices(d.bars.filter((b) => b.price_per_half_liter != null));
+        const key = sortKey(sort_by);
         const maxAge = max_age_days ?? 365;
-        const key = sort_by === "half_liter" ? "price_per_half_liter" : "price";
-        const candidates = d.bars
-          .filter((b) => b.price_per_half_liter != null)
-          .filter((b) => hour == null || validAt(b, hour))
-          .map((b) => ({ ...b, price_age_days: ageDays(b), valid_until: parseValidity(b.validity).until_hour ?? null }))
-          .filter((b) => b.price_age_days == null || b.price_age_days <= maxAge)
-          .filter((b) => max_price == null || b.price_per_half_liter <= max_price)
-          .sort((a, b) => (a[key] ?? 1e9) - (b[key] ?? 1e9) || (a.price_per_half_liter ?? 1e9) - (b.price_per_half_liter ?? 1e9) || (a.price_age_days ?? 999) - (b.price_age_days ?? 999));
-        const brief = (b) =>
-          b && {
-            name: b.name,
-            price: b.price,
-            size_liters: b.size_liters,
-            price_per_half_liter: b.price_per_half_liter,
-            happy_hour: b.time_limited,
-            valid_until_hour: b.valid_until,
-            address: b.address,
-          };
-        const cheapestGlass = candidates.reduce((m, b) => (b.price != null && (!m || b.price < m.price) ? b : m), null);
-        const allEvening = candidates.find((b) => b.valid_until == null);
-        const picks = candidates.slice(0, limit ?? 10).map((b) => ({
+        const okPrice = (p) => {
+          const age = ageDays(p);
+          return p[key] != null && (age == null || age <= maxAge) && (max_price == null || (p.price_per_half_liter ?? 1e9) <= max_price);
+        };
+
+        const rows = [];
+        let allEvening = null;
+        for (const b of bars) {
+          let pool = b.prices;
+          if (timeFilter) pool = applicablePrices(b.prices, t.day, t.hour);
+          else if (t.explicitDay)
+            pool = b.prices.filter((p) => p.type !== "time_limited" || !p._v.days || p._v.days.includes(t.day));
+          pool = pool.filter(okPrice);
+          if (!pool.length) continue;
+          const chosen = [...pool].sort(cmpPrices(key))[0];
+          const others = b.prices.filter((p) => p !== chosen);
+          rows.push({ b, chosen, others });
+
+          const def = b.prices.filter((p) => p.type !== "time_limited" && okPrice(p)).sort(cmpPrices(key))[0];
+          if (def && (!allEvening || cmpPrices(key)(def, allEvening.p) < 0)) allEvening = { b, p: def };
+        }
+        rows.sort((x, y) => cmpPrices(key)(x.chosen, y.chosen));
+
+        const row = ({ b, chosen: p, others }) => ({
           name: b.name,
-          price: b.price,
-          size_liters: b.size_liters,
-          price_per_half_liter: b.price_per_half_liter,
-          happy_hour: b.time_limited,
-          valid_until_hour: b.valid_until,
-          validity: b.validity,
-          brewery: b.brewery,
+          price: p.price,
+          size_liters: p.size_liters,
+          price_per_half_liter: p.price_per_half_liter,
+          happy_hour: p.type === "time_limited",
+          price_type: p.type,
+          window: p.window,
+          valid_from_hour: p.valid_from_hour,
+          valid_until_hour: p.valid_until_hour,
+          days: p.days,
+          validity: p.validity,
+          brewery: p.brewery ?? b.brewery,
           address: b.address,
-          price_checked: b.price_checked,
-          price_age_days: b.price_age_days,
-        }));
+          price_checked: p.price_checked,
+          price_age_days: ageDays(p),
+          other_prices: others.map(briefPrice),
+        });
+        const picks = rows.slice(0, limit ?? 10).map(row);
+        const brief = (r) =>
+          r && {
+            name: r.b.name,
+            price: r.p.price,
+            size_liters: r.p.size_liters,
+            price_per_half_liter: r.p.price_per_half_liter,
+            window: r.p.window,
+            address: r.b.address,
+          };
+        const cheapestGlass = rows.length ? [...rows].sort((x, y) => cmpPrices("price")(x.chosen, y.chosen))[0] : null;
+
         return json({
           location: d.location_name,
           source: d.url,
           evaluated_for: label,
-          sorted_by: sort_by === "half_liter" ? "pris per halvliter" : "glasspris",
+          sorted_by: key === "price" ? "glasspris" : "pris per halvliter",
           median_price: d.stats.median,
-          cheapest_glass: brief(cheapestGlass),
+          matches: rows.length,
+          cheapest_glass: cheapestGlass && { ...brief({ b: cheapestGlass.b, p: cheapestGlass.chosen }), happy_hour: cheapestGlass.chosen.type === "time_limited" },
           cheapest_all_evening: brief(allEvening),
           note:
-            (hour == null
-              ? "Ingen tid oppgitt: listen inkluderer happy hour-priser – merk dem med 'til kl X'. Spør gjerne når brukeren skal ut hvis det påvirker valget. "
-              : "Kun priser som gjelder på valgt tidspunkt. ") +
-            "price = glasspris for size_liters; price_per_half_liter = omregnet til 0,5 l. Prisene er brukerrapporterte.",
+            (timeFilter
+              ? "Viser prisen som gjelder på valgt dag og klokkeslett. "
+              : "Ingen tid oppgitt: hver pris vurderes for seg, så happy hour-priser er med – vis vinduet (window). ") +
+            "price = glasspris for size_liters; price_per_half_liter = omregnet til 0,5 l. other_prices = barens andre priser. Prisene er brukerrapporterte.",
           suggestions: picks,
         });
       } catch (e) {
@@ -177,8 +278,7 @@ export function createServer() {
           location: d.location_name,
           source: d.url,
           ...s,
-          difference_from_parent:
-            s.median != null && s.parent_median != null ? s.median - s.parent_median : null,
+          difference_from_parent: s.median != null && s.parent_median != null ? s.median - s.parent_median : null,
           cheapest: prices.length ? Math.min(...prices) : null,
           most_expensive: prices.length ? Math.max(...prices) : null,
           bars_listed: d.bars.length,
@@ -199,8 +299,7 @@ export function createServer() {
     },
     async ({ place }) => {
       try {
-        const p = place || DEFAULT_PLACE;
-        const d = await getList(p);
+        const d = await getList(place || DEFAULT_PLACE);
         return json({
           location: d.location_name,
           areas: d.areas.map((a) => ({ ...a, place: a.slug ? `${d.path}/${a.slug}` : null })),
@@ -215,7 +314,8 @@ export function createServer() {
     "find_bar",
     {
       title: "Finn bar",
-      description: "Søk etter en bestemt bar på navn og få pris, bryggeri, adresse og når prisen sist ble sjekket.",
+      description:
+        "Søk etter en bar på navn. Gir `prices` med ALLE priser (vanlig pris og happy hour), hver med pris, størrelse, pris per halvliter, type, tidsvindu (valid_from_hour/valid_until_hour), ukedager og gyldighetstekst.",
       inputSchema: {
         name: z.string().describe("Hele eller deler av navnet, f.eks. 'Bar Royal'"),
         place: placeSchema,
@@ -226,7 +326,67 @@ export function createServer() {
       try {
         const d = await getList(place || DEFAULT_PLACE);
         const { total, bars } = filterBars(d.bars, { query: name, sort: "name", limit: 20 });
-        return json({ location: d.location_name, matches: total, bars });
+        const enriched = await withAllPrices(bars, { all: true });
+        return json({
+          location: d.location_name,
+          matches: total,
+          bars: enriched.map((b) => ({ ...b, prices: b.prices.map(publicPrice) })),
+        });
+      } catch (e) {
+        return fail(e);
+      }
+    }
+  );
+
+  server.registerTool(
+    "audit_prices",
+    {
+      title: "Kontroll: priser per bar",
+      description:
+        "Vedlikehold: henter detaljsiden for ALLE barer på et sted og sammenligner antall priser med det lista viser. Rapporterer barer med flere priser, barer der hurtigsjekken ville bommet, ukjente gyldighetstekster og feil. Tar 10–60 sekunder.",
+      inputSchema: { place: placeSchema },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ place }) => {
+      try {
+        const d = await getList(place || DEFAULT_PLACE);
+        const res = await mapLimit(d.bars, 8, (b) => getBarDetail(b.slug));
+        const multi = [];
+        const missed = [];
+        const failed = [];
+        const unparsed = new Map();
+        const counts = {};
+        d.bars.forEach((b, i) => {
+          const r = res[i];
+          if (!r.ok) return failed.push({ name: b.name, slug: b.slug, error: r.error });
+          const prices = r.value.prices || [];
+          counts[prices.length] = (counts[prices.length] || 0) + 1;
+          for (const p of prices) {
+            const v = parseValidityText(p.valid);
+            if (!v.parsed) unparsed.set(p.valid, (unparsed.get(p.valid) || 0) + 1);
+          }
+          if (prices.length > 1) {
+            const entry = {
+              name: b.name,
+              list_shows: 1,
+              bar_page_has: prices.length,
+              prices: prices.map((p) => `${p.price} kr – ${p.valid}`),
+            };
+            multi.push(entry);
+            if (!needsDetail(b)) missed.push(entry);
+          }
+        });
+        return json({
+          location: d.location_name,
+          bars_checked: d.bars.length,
+          price_count_distribution: counts,
+          bars_with_multiple_prices: multi.length,
+          not_caught_by_quick_check: missed,
+          unparsed_validity_texts: [...unparsed].map(([text, n]) => ({ text, count: n })),
+          fetch_errors: failed,
+          bars: multi,
+          day_keys: DAY_KEYS,
+        });
       } catch (e) {
         return fail(e);
       }
